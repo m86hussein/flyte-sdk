@@ -558,6 +558,12 @@ class CustomPydanticJsonSchemaGenerator(GenerateJsonSchema):
         return result
 
 
+# Added in pydantic 2.12; older versions can only exclude top-level computed fields.
+_PYDANTIC_HAS_EXCLUDE_COMPUTED_FIELDS = (
+    "exclude_computed_fields" in inspect.signature(BaseModel.model_dump_json).parameters
+)
+
+
 class PydanticTransformer(TypeTransformer[BaseModel]):
     def __init__(self):
         super().__init__("Pydantic Transformer", BaseModel, enable_type_assertions=False)
@@ -603,7 +609,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
         await _invoke_lazy_uploaders(python_val)
 
-        json_str = python_val.model_dump_json()
+        # Computed fields are rebuilt on validation; sending them fails models with extra="forbid".
+        if _PYDANTIC_HAS_EXCLUDE_COMPUTED_FIELDS:
+            json_str = python_val.model_dump_json(exclude_computed_fields=True)
+        else:
+            json_str = python_val.model_dump_json(exclude=set(type(python_val).model_computed_fields))
         dict_obj = json.loads(json_str)
         dict_obj = _walk_enum_fields(dict_obj, type(python_val), to_names=True)
         msgpack_bytes = msgpack.dumps(dict_obj)
